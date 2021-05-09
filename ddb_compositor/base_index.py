@@ -21,7 +21,7 @@ from enum import IntEnum
 
 from boto3.dynamodb.conditions import Key, Attr
 
-from ddb_compositor.exceptions import *
+from ddb_compositor.exceptions import UnknownIndexTypeError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(environ.get("LOG_LEVEL", logging.INFO))
@@ -229,7 +229,7 @@ class Index(object):
         key = Key(self.hash_key_name).eq(self.hash_key_format.format(**field_values))
 
         if self.range_key_format is None:
-            logger.debug(f"No range_key present. Condition expression only includes {self.hash_key_name}")
+            logger.debug("No range_key present. Condition expression only includes %s", self.hash_key_name)
             return key
 
         if key_score == 100 and not force_key_begins_with:

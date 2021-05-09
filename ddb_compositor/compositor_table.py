@@ -29,8 +29,8 @@ from ddb_compositor.indexes import (
     GlobalSecondaryIndex,
     LocalSecondaryIndex,
 )
-from ddb_compositor.exceptions import *
 from ddb_compositor.utility import DdbJsonEncoder
+from ddb_compositor.exceptions import UnknownIndexTypeError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(environ.get("LOG_LEVEL", logging.INFO))
@@ -297,9 +297,9 @@ class CompositorTable(object):
             if not overwrite:
                 put_item_args.update({"ConditionExpression": self.primary_index.get_ne_conditional(field_values)})
             try:
-                logger.debug("New item: {r}".format(r=json.dumps(item, cls=DdbJsonEncoder)))
+                logger.debug("New item: %s", json.dumps(item, cls=DdbJsonEncoder))
                 response = self.dynamo_table.put_item(**put_item_args)
-                logger.debug("Put_item: {resp}".format(resp=json.dumps(response, cls=DdbJsonEncoder)))
+                logger.debug("Put_item: %s", json.dumps(response, cls=DdbJsonEncoder))
                 response["ResponseMetadata"]["HTTPStatusCode"] = 201
             except botocore.exceptions.ClientError as e:
                 # Ignore the ConditionalCheckFailedException, bubble up
@@ -312,7 +312,7 @@ class CompositorTable(object):
                     response["body"] = {
                         "code": response["ResponseMetadata"]["HTTPStatusCode"],
                         "message": "Duplicate entry found!",
-                        "fields": str(self.get_primary_key_value_pairs(field_values)),
+                        "fields": str(self.primary_index.field_values_intersection(field_values)),
                     }
                 break
 
@@ -366,10 +366,12 @@ class CompositorTable(object):
                 del_item = item.copy()
 
             logger.debug(
-                "Deleting item: {k}:{s}".format(
-                    k=item[self.primary_index.hash_key_name],
-                    s=item.get(self.primary_index.range_key_name, ""),
-                )
+                "Deleting item: %s:%s",
+                k=item[self.primary_index.hash_key_name],
+                s=item.get(
+                    self.primary_index.range_key_name,
+                    "",
+                ),
             )
 
             delete_item = {
@@ -384,7 +386,7 @@ class CompositorTable(object):
 
         response = self.dynamo_resource.batch_write_item(RequestItems={self.table_name: delete_items})
 
-        logger.debug("DynamoDB 'delete_item' response: {resp}".format(resp=json.dumps(response, cls=DdbJsonEncoder)))
+        logger.debug("DynamoDB 'delete_item' response: %s", json.dumps(response, cls=DdbJsonEncoder))
 
         # Cleanup del_item
         for field_name in self.get_all_key_field_names():

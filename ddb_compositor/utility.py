@@ -12,18 +12,17 @@
 # The above copyright notice and this permission notice shall be included in all
 # copies or substantial portions of the Software.
 # ==============================================================================
-
-import sys
-
-from ddb_compositor.compositor_table import CompositorTable
-from ddb_compositor.indexes import (
-    PrimaryIndex,
-    GlobalSecondaryIndex,
-    LocalSecondaryIndex,
-)
+import json
+from decimal import Decimal
+from datetime import date, datetime
 
 
-if sys.hexversion < 0x30701F0:
-    sys.exit("Python 3.7.3 or newer is required by ddb_compositor module.")
-
-__version__ = "0.1.0"
+class DdbJsonEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Decimal):
+            return int(o) if int(o) == o else float(str(o))
+        if isinstance(o, datetime):
+            return str(o)
+        if isinstance(o, date):
+            return str(o)
+        return super(DdbJsonEncoder, self).default(o)

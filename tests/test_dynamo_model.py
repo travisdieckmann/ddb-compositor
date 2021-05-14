@@ -25,19 +25,19 @@ test_table = CompositorTable(
         "createdBy",
     ],
     primary_index=PrimaryIndex(
-        hash_key_name="pk",
-        hash_key_format="{tenant_id}",
-        range_key_name="ps",
-        range_key_format="datadefinition:v{version}:{flowFilterId}:{id}",
+        partition_key_name="pk",
+        partition_key_format="{tenant_id}",
+        sort_key_name="ps",
+        sort_key_format="datadefinition:v{version}:{flowFilterId}:{id}",
         composite_separator=":",
     ),
     secondary_indexes=[
         GlobalSecondaryIndex(
             name="GSI",
-            hash_key_name="pk",
-            hash_key_format="{tenant_id}",
-            range_key_name="gss",
-            range_key_format="datadefinition:{id}:v{version}",
+            partition_key_name="pk",
+            partition_key_format="{tenant_id}",
+            sort_key_name="gss",
+            sort_key_format="datadefinition:{id}:v{version}",
             composite_separator=":",
         )
     ],
@@ -576,8 +576,8 @@ no_range_test_table = CompositorTable(
         "createdBy",
     ],
     primary_index=PrimaryIndex(
-        hash_key_name="pk",
-        hash_key_format="procEndpoint:{uid}",
+        partition_key_name="pk",
+        partition_key_format="procEndpoint:{uid}",
         composite_separator=":",
     ),
     secondary_indexes=[],

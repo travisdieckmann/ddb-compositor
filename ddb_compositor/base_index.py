@@ -40,20 +40,20 @@ class Index(object):
 
     def __init__(
         self,
-        hash_key_name,
-        hash_key_format,
-        range_key_name=None,
-        range_key_format=None,
+        partition_key_name,
+        partition_key_format,
+        sort_key_name=None,
+        sort_key_format=None,
         index_type: IndexType = None,
         name: str = None,
         composite_separator: str = None,
     ):
-        self.hash_key_name = hash_key_name
-        self.hash_key_format = hash_key_format
-        self.hash_key_format_fields = self.__format_string_field_list(hash_key_format)
-        self.range_key_name = range_key_name
-        self.range_key_format = range_key_format
-        self.range_key_format_fields = self.__format_string_field_list(range_key_format)
+        self.partition_key_name = partition_key_name
+        self.partition_key_format = partition_key_format
+        self.partition_key_format_fields = self.__format_string_field_list(partition_key_format)
+        self.sort_key_name = sort_key_name
+        self.sort_key_format = sort_key_format
+        self.sort_key_format_fields = self.__format_string_field_list(sort_key_format)
         self.type = index_type
         self.name = name
         self.composite_separator = self.__composite_separator(composite_separator)
@@ -77,18 +77,18 @@ class Index(object):
     def __composite_separator(self, separator):
         if all(
             (
-                self.hash_key_format_fields,
-                self.range_key_format_fields,
+                self.partition_key_format_fields,
+                self.sort_key_format_fields,
                 separator is None,
             )
         ):
             raise RuntimeError(
-                "composite_separator must be specified when declaring hash_key_format or range_key_format strings"
+                "composite_separator must be specified when declaring partition_key_format or sort_key_format strings"
             )
         else:
             return separator
 
-    def hash_key_value(self, field_values: dict) -> dict:
+    def partition_key_value(self, field_values: dict) -> dict:
         """Match field_values with fields in the hash-key format string
 
         Arguments:
@@ -97,9 +97,9 @@ class Index(object):
         Returns:
             dict -- Hash-key fields and values
         """
-        return {self.hash_key_name: self.hash_key_format.format(**field_values)}
+        return {self.partition_key_name: self.partition_key_format.format(**field_values)}
 
-    def range_key_value(self, field_values: dict) -> dict:
+    def sort_key_value(self, field_values: dict) -> dict:
         """Match field_values with fields in the range-key format string
 
         Arguments:
@@ -108,9 +108,9 @@ class Index(object):
         Returns:
             dict -- Range-key fields and values
         """
-        if self.range_key_name is None:
+        if self.sort_key_name is None:
             return {}
-        return {self.range_key_name: self.range_key_format.format(**field_values)}
+        return {self.sort_key_name: self.sort_key_format.format(**field_values)}
 
     def full_key(self, field_values: dict) -> dict:
         """Match field_values with fields in the combined hash and range key's format strings
@@ -121,8 +121,8 @@ class Index(object):
         Returns:
             dict -- hash and range key's fields and values
         """
-        key = self.hash_key_value(field_values)
-        key.update(self.range_key_value(field_values))
+        key = self.partition_key_value(field_values)
+        key.update(self.sort_key_value(field_values))
         return key
 
     def get_ne_conditional(self, field_values: dict) -> Attr:
@@ -134,10 +134,10 @@ class Index(object):
         Returns:
             Attr -- Conditional attribute
         """
-        expression = Attr(self.hash_key_name).ne(self.hash_key_format.format(**field_values))
+        expression = Attr(self.partition_key_name).ne(self.partition_key_format.format(**field_values))
 
-        if self.range_key_name is not None:
-            expression = expression & Attr(self.range_key_name).ne(self.range_key_format.format(**field_values))
+        if self.sort_key_name is not None:
+            expression = expression & Attr(self.sort_key_name).ne(self.sort_key_format.format(**field_values))
 
         return expression
 
@@ -156,53 +156,58 @@ class Index(object):
 
         return matches
 
-    def hash_key_ordered_intersection(self, field_values: dict) -> list:
+    def partition_key_ordered_intersection(self, field_values: dict) -> list:
         return self.__ordered_intersection(
-            self.hash_key_format_fields,
+            self.partition_key_format_fields,
             field_values.keys(),
         )
 
-    def range_key_ordered_intersection(self, field_values: dict) -> list:
-        return self.__ordered_intersection(self.range_key_format_fields, field_values.keys())
+    def sort_key_ordered_intersection(self, field_values: dict) -> list:
+        return self.__ordered_intersection(self.sort_key_format_fields, field_values.keys())
 
     def field_values_intersection(self, field_values: dict) -> dict:
         return {
             key: field_values[key]
-            for key in set(self.hash_key_format_fields + self.range_key_format_fields).intersection(field_values.keys())
+            for key in set(self.partition_key_format_fields + self.sort_key_format_fields).intersection(
+                field_values.keys()
+            )
         }
 
     def query_score(self, field_values: dict, unique_id_attribute_name: str = None) -> int:
         score = 0
         matching_fields = self.__ordered_intersection(
-            self.hash_key_format_fields,
+            self.partition_key_format_fields,
             field_values.keys(),
         )
 
-        if len(matching_fields) < len(self.hash_key_format_fields):
+        if len(matching_fields) < len(self.partition_key_format_fields):
             return round(score)
 
-        if unique_id_attribute_name in self.hash_key_format_fields and unique_id_attribute_name in field_values:
+        if unique_id_attribute_name in self.partition_key_format_fields and unique_id_attribute_name in field_values:
             score += 200 * (
-                (len(self.hash_key_format_fields) - self.hash_key_format_fields.index(unique_id_attribute_name))
-                / len(self.hash_key_format_fields)
+                (
+                    len(self.partition_key_format_fields)
+                    - self.partition_key_format_fields.index(unique_id_attribute_name)
+                )
+                / len(self.partition_key_format_fields)
             )
 
-        matching_fields = self.__ordered_intersection(self.range_key_format_fields, field_values.keys())
+        matching_fields = self.__ordered_intersection(self.sort_key_format_fields, field_values.keys())
 
-        if len(self.range_key_format_fields) < 1 or len(matching_fields) < 1:
+        if len(self.sort_key_format_fields) < 1 or len(matching_fields) < 1:
             return round(score)
 
-        for field in self.range_key_format_fields:
+        for field in self.sort_key_format_fields:
             if field in field_values:
                 score += 1
             else:
                 break
 
-        score = score / len(self.range_key_format_fields) * 100
-        if unique_id_attribute_name in self.range_key_format_fields and unique_id_attribute_name in field_values:
+        score = score / len(self.sort_key_format_fields) * 100
+        if unique_id_attribute_name in self.sort_key_format_fields and unique_id_attribute_name in field_values:
             score += 100 * (
-                (len(self.range_key_format_fields) - self.range_key_format_fields.index(unique_id_attribute_name))
-                / len(self.range_key_format_fields)
+                (len(self.sort_key_format_fields) - self.sort_key_format_fields.index(unique_id_attribute_name))
+                / len(self.sort_key_format_fields)
             )
 
         return round(score)
@@ -210,7 +215,7 @@ class Index(object):
     def get_sort_best_match(self, field_values: dict) -> str:
         best_match = ""
 
-        for segment in string.Formatter().parse(self.range_key_format):
+        for segment in string.Formatter().parse(self.sort_key_format):
             best_match += segment[0]
             field = segment[1]
             if field in field_values:
@@ -226,18 +231,18 @@ class Index(object):
         key_score: int,
         force_key_begins_with: bool = False,
     ) -> Key:
-        key = Key(self.hash_key_name).eq(self.hash_key_format.format(**field_values))
+        key = Key(self.partition_key_name).eq(self.partition_key_format.format(**field_values))
 
-        if self.range_key_format is None:
-            logger.debug("No range_key present. Condition expression only includes %s", self.hash_key_name)
+        if self.sort_key_format is None:
+            logger.debug("No sort_key present. Condition expression only includes %s", self.partition_key_name)
             return key
 
         if key_score == 100 and not force_key_begins_with:
-            key = key & Key(self.range_key_name).eq(self.range_key_format.format(**field_values))
+            key = key & Key(self.sort_key_name).eq(self.sort_key_format.format(**field_values))
         else:
             sort_best_match = self.get_sort_best_match(field_values)
             if force_key_begins_with:
                 sort_best_match = sort_best_match.rstrip(self.composite_separator)
-            key = key & Key(self.range_key_name).begins_with(sort_best_match)
+            key = key & Key(self.sort_key_name).begins_with(sort_best_match)
 
         return key

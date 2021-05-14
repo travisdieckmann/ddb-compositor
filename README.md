@@ -7,7 +7,7 @@ DDB-Compositor is built to wrangle the complexity of CRUD operations in [AWS Dyn
 ### Composite Key Definition
 Composite key syntax utilized the common Python [f-string](https://realpython.com/python-f-strings/#f-strings-a-new-and-improved-way-to-format-strings-in-python) or [format-string keyword arguments](https://realpython.com/python-formatted-output/#keyword-arguments) annotation.
 #### Example
-Composite Key: `hash_key_format = "someItemType:{uid}:{version}"`
+Composite Key: `partition_key_format = "someItemType:{uid}:{version}"`
 
 Composite Key Attributes: `[uid, version]`
 
@@ -67,8 +67,8 @@ table =  CompositorTable(
 
 
 ## To-Do List for 1.0
-- Rename `hash_key` to `partition_key` to align with AWS documentation
-- Rename `range_key` to `sort_key` to align with AWS documentation
+- ~~Rename `hash_key` to `partition_key` to align with AWS documentation~~
+- ~~Rename `range_key` to `sort_key` to align with AWS documentation~~
 - Define a standard response model and implement as dataclass
 - Refactor CRUD operations to be more readable and DRY
 - Add pagination utilizing `next_token` property

@@ -102,23 +102,23 @@ class CompositorTable(object):
         return int(results.get("Item", {}).get(self.latest_version_attribute, 0))
 
     def get_all_key_field_names(self) -> list:
-        fields = [self.primary_index.hash_key_name]
-        if self.primary_index.range_key_name:
-            fields.append(self.primary_index.range_key_name)
+        fields = [self.primary_index.partition_key_name]
+        if self.primary_index.sort_key_name:
+            fields.append(self.primary_index.sort_key_name)
         for index in self.secondary_indexes:
-            if index.hash_key_name:
-                fields.append(index.hash_key_name)
-            if index.range_key_name:
-                fields.append(index.range_key_name)
+            if index.partition_key_name:
+                fields.append(index.partition_key_name)
+            if index.sort_key_name:
+                fields.append(index.sort_key_name)
         return list(set(fields))
 
     def all_item_properties(self) -> list:
         all_field_names = self.attribute_list
-        all_field_names += self.primary_index.hash_key_format_fields
-        all_field_names += self.primary_index.range_key_format_fields
+        all_field_names += self.primary_index.partition_key_format_fields
+        all_field_names += self.primary_index.sort_key_format_fields
         for index in self.secondary_indexes:
-            all_field_names += index.hash_key_format_fields
-            all_field_names += index.range_key_format_fields
+            all_field_names += index.partition_key_format_fields
+            all_field_names += index.sort_key_format_fields
 
         return list(set(all_field_names))
 
@@ -201,11 +201,11 @@ class CompositorTable(object):
 
         field_values = {
             self.versioning_attribute: 0,
-            self.primary_index.hash_key_name: item[self.primary_index.hash_key_name],
+            self.primary_index.partition_key_name: item[self.primary_index.partition_key_name],
         }
 
         for index in self.secondary_indexes:
-            field_values[index.hash_key_name] = item[index.hash_key_name]
+            field_values[index.partition_key_name] = item[index.partition_key_name]
 
         primary_index_score = self.primary_index.query_score(field_values=field_values)
 
@@ -215,12 +215,12 @@ class CompositorTable(object):
 
         if all(primary_index_score >= x for x in secondary_index_scores):
             sort_best_match = self.primary_index.get_sort_best_match(field_values)
-            if item[self.primary_index.range_key_name].startswith(sort_best_match):
+            if item[self.primary_index.sort_key_name].startswith(sort_best_match):
                 return True
         else:
             secondary_index = self.secondary_indexes[secondary_index_scores.index(max(secondary_index_scores))]
             sort_best_match = secondary_index.get_sort_best_match(field_values)
-            if item[secondary_index.range_key_name].startswith(sort_best_match):
+            if item[secondary_index.sort_key_name].startswith(sort_best_match):
                 return True
 
         return False
@@ -243,20 +243,20 @@ class CompositorTable(object):
 
     def field_values_from_item_keys(self, item: dict) -> dict:
         field_values = self.reverse_format_string(
-            item[self.primary_index.hash_key_name], self.primary_index.hash_key_format
+            item[self.primary_index.partition_key_name], self.primary_index.partition_key_format
         )
-        if self.primary_index.range_key_name:
+        if self.primary_index.sort_key_name:
             field_values.update(
                 self.reverse_format_string(
-                    item[self.primary_index.range_key_name],
-                    self.primary_index.range_key_format,
+                    item[self.primary_index.sort_key_name],
+                    self.primary_index.sort_key_format,
                 )
             )
         for index in self.secondary_indexes:
-            field_values.update(self.reverse_format_string(item[index.hash_key_name], index.hash_key_format))
+            field_values.update(self.reverse_format_string(item[index.partition_key_name], index.partition_key_format))
 
-            if index.hash_key_name:
-                field_values.update(self.reverse_format_string(item[index.range_key_name], index.range_key_format))
+            if index.partition_key_name:
+                field_values.update(self.reverse_format_string(item[index.sort_key_name], index.sort_key_format))
 
         return field_values
 
@@ -367,19 +367,21 @@ class CompositorTable(object):
 
             logger.debug(
                 "Deleting item: %s:%s",
-                k=item[self.primary_index.hash_key_name],
+                k=item[self.primary_index.partition_key_name],
                 s=item.get(
-                    self.primary_index.range_key_name,
+                    self.primary_index.sort_key_name,
                     "",
                 ),
             )
 
             delete_item = {
-                "DeleteRequest": {"Key": {self.primary_index.hash_key_name: item[self.primary_index.hash_key_name]}}
+                "DeleteRequest": {
+                    "Key": {self.primary_index.partition_key_name: item[self.primary_index.partition_key_name]}
+                }
             }
 
-            if self.primary_index.range_key_name:
-                attrib_name = self.primary_index.range_key_name
+            if self.primary_index.sort_key_name:
+                attrib_name = self.primary_index.sort_key_name
                 delete_item["DeleteRequest"]["Key"][attrib_name] = item[attrib_name]
 
             delete_items.append(delete_item)

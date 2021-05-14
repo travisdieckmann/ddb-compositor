@@ -69,8 +69,14 @@ table =  CompositorTable(
 ## To-Do List for 1.0
 - ~~Rename `hash_key` to `partition_key` to align with AWS documentation~~
 - ~~Rename `range_key` to `sort_key` to align with AWS documentation~~
-- Define a standard response model and implement as dataclass
+- ~~Define a standard response model and implement as dataclass~~
+  - CANCELLED - Returning native DDB Table response
 - Refactor CRUD operations to be more readable and DRY
+  - put_item
+  - get_item
+  - get_items
+  - update_item
+  - delete_item
 - Add pagination utilizing `next_token` property
 - Implement table flag to optionally return DynamoDB consumed capacity
 - Implement FilterExpression capabilities as part of read operations

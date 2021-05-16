@@ -65,7 +65,7 @@ def test_create_item_request(boto_mock):
     # Expecting that there would be a call to DynamoDB Scan function during execution with these parameters.
 
     # Call the function to test.
-    result = test_table.create_item(
+    result = test_table.put_item(
         field_values={
             "tenant_id": "000000000001",
             "id": "0123456789ABCDEF",

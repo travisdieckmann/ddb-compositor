@@ -94,12 +94,15 @@ class CompositorTable(object):
 
         return response
 
-    def latest_version(self, field_values: dict) -> int:
+    def get_next_version(self, field_values: dict, latest_version: int = None) -> int:
+        if latest_version is not None:
+            return latest_version + 1
+
         query_args = self.get_expression([self.latest_version_attribute])
         field_values[self.versioning_attribute] = 0
         query_args["Key"] = self.primary_index.full_key(field_values)
         results = self.dynamo_table.get_item(**query_args)
-        return int(results.get("Item", {}).get(self.latest_version_attribute, 0))
+        return int(results.get("Item", {}).get(self.latest_version_attribute, 0)) + 1
 
     def get_all_key_field_names(self) -> list:
         fields = [self.primary_index.partition_key_name]
@@ -267,14 +270,12 @@ class CompositorTable(object):
             "body": {"code": 404, "message": "No item found..."},
         }
 
-    def create_item(self, field_values: dict, overwrite: bool = True, latest_version: int = None) -> dict:
+    def put_item(self, field_values: dict, overwrite: bool = True, latest_version: int = None) -> dict:
         field_values = self.stringify(field_values)
         field_values = self.params_cleanup(field_values)
+
         if self.versioning_enabled:
-            if latest_version is None:
-                field_values[self.versioning_attribute] = self.latest_version(field_values) + 1
-            else:
-                field_values[self.versioning_attribute] = latest_version + 1
+            field_values[self.versioning_attribute] = self.get_next_version(field_values, latest_version)
 
         items = [field_values.copy()]
         items[0].update(self.primary_index.full_key(field_values))
@@ -420,7 +421,7 @@ class CompositorTable(object):
         if self.versioning_enabled and not force_overwrite:
             latest_version = latest_item.pop(self.latest_version_attribute)
 
-        return self.create_item(field_values=field_values, latest_version=latest_version)
+        return self.put_item(field_values=field_values, latest_version=latest_version)
 
     @staticmethod
     def params_cleanup(params: dict, null_if_empty: bool = True) -> dict:

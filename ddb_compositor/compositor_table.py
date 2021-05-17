@@ -20,9 +20,11 @@ from os import environ
 from decimal import Decimal
 from datetime import datetime, date
 from typing import List, Union
+from copy import deepcopy
 
 import boto3
 import botocore.exceptions
+from boto3.dynamodb.transform import TypeSerializer, TypeDeserializer
 
 from ddb_compositor.indexes import (
     PrimaryIndex,
@@ -269,6 +271,56 @@ class CompositorTable(object):
             "Items": [],
             "body": {"code": 404, "message": "No item found..."},
         }
+
+    @staticmethod
+    def __item_serialize(item: dict) -> dict:
+        new_item = {}
+        for key in item:
+            new_item[key] = TypeSerializer().serialize(item[key])
+
+        return new_item
+
+    @staticmethod
+    def __item_deserialize(item: dict) -> dict:
+        new_item = {}
+        for key in item:
+            new_item[key] = TypeDeserializer().deserialize(item[key])
+
+        return new_item
+
+    def __write_items_generator(self, field_values: dict, overwrite: bool = True, latest_version: int = None):
+        items = []
+
+        if self.versioning_enabled:
+            field_values[self.versioning_attribute] = self.get_next_version(field_values, latest_version)
+
+        item = deepcopy(field_values)
+        item.update(self.primary_index.full_key(item))
+
+        for index in self.secondary_indexes:
+            item.update(index.full_key(item))
+
+        if not overwrite:
+            item.update({"ConditionExpression": self.primary_index.get_ne_conditional(field_values)})
+
+        items.append({"Put": {"TableName": self.table_name, "Item": self.__item_serialize(item)}})
+
+        if self.versioning_enabled:
+            item = deepcopy(field_values)
+            item[self.versioning_attribute] = 0
+            item.update(self.primary_index.full_key(item))
+
+            for index in self.secondary_indexes:
+                item.update(index.full_key(item))
+
+            if not overwrite:
+                item.update({"ConditionExpression": self.primary_index.get_ne_conditional(field_values)})
+
+            item[self.latest_version_attribute] = item[self.versioning_attribute]
+
+            items.append({"Put": {"TableName": self.table_name, "Item": self.__item_serialize(item)}})
+
+        return items
 
     def put_item(self, field_values: dict, overwrite: bool = True, latest_version: int = None) -> dict:
         field_values = self.stringify(field_values)

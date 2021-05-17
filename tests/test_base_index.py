@@ -1,5 +1,6 @@
 import pytest
 from ddb_compositor.base_index import Index, IndexType
+from ddb_compositor.exceptions import UnknownIndexTypeError
 
 primary_index = Index(
     partition_key_name="some_index",
@@ -25,6 +26,22 @@ def test_index_init():
     assert primary_index_with_sort.name == "PrimaryIndex"
     assert primary_index_with_sort.type == IndexType.PRIMARY
     assert primary_index_with_sort.partition_key_format == "aslr:{some_val}:{some_val2}"
+
+
+def test_index_enum_to_bool():
+    assert primary_index._Index__index_enum_to_bool(IndexType.PRIMARY) == (True, False, False)
+    assert primary_index._Index__index_enum_to_bool(IndexType.GLOBAL_SECONDARY) == (False, True, False)
+    assert primary_index._Index__index_enum_to_bool(IndexType.LOCAL_SECONDARY) == (False, False, True)
+
+    with pytest.raises(UnknownIndexTypeError):
+        primary_index._Index__index_enum_to_bool("GLOBAL_SECONDARY")
+
+
+def test_composite_separator():
+    assert primary_index._Index__composite_separator(":") == ":"
+
+    with pytest.raises(RuntimeError):
+        Index(partition_key_name="a", partition_key_format="a:{b}:c", index_type=IndexType.PRIMARY)
 
 
 def test_index_partition_key_value():
@@ -194,4 +211,42 @@ def test_get_condition_expression():
         key_score=100,
     )
 
+    assert condition_expression.get_expression()["operator"] == "="
     assert condition_expression.get_expression()["values"][1] == "aslr:abcd:1234"
+
+
+def test_get_condition_expression_with_sort():
+    index = Index(
+        partition_key_name="some_index",
+        partition_key_format="aslr:{some_val}:{some_val2}",
+        sort_key_name="some_sort",
+        sort_key_format="ding:{do}:{done}:doe",
+        index_type=IndexType.PRIMARY,
+        name="PrimaryIndex",
+        composite_separator=":",
+    )
+
+    condition_expression = index.get_condition_expression(
+        field_values={"some_val": "abcd", "some_val2": "1234", "some_new_val": "efgh", "do": 9876, "done": "wxyz"},
+        key_score=100,
+    )
+
+    assert condition_expression.get_expression()["values"][1].get_expression()["operator"] == "="
+    assert condition_expression.get_expression()["values"][1].get_expression()["values"][1] == "ding:9876:wxyz:doe"
+
+    condition_expression = index.get_condition_expression(
+        field_values={"some_val": "abcd", "some_val2": "1234", "some_new_val": "efgh", "do": 9876},
+        key_score=99,
+    )
+
+    assert condition_expression.get_expression()["values"][1].get_expression()["operator"] == "begins_with"
+    assert condition_expression.get_expression()["values"][1].get_expression()["values"][1] == "ding:9876:"
+
+    condition_expression = index.get_condition_expression(
+        field_values={"some_val": "abcd", "some_val2": "1234", "some_new_val": "efgh", "do": 9876},
+        key_score=99,
+        force_key_begins_with=True,
+    )
+
+    assert condition_expression.get_expression()["values"][1].get_expression()["operator"] == "begins_with"
+    assert condition_expression.get_expression()["values"][1].get_expression()["values"][1] == "ding:9876"

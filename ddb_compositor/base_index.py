@@ -75,13 +75,7 @@ class Index(object):
         )
 
     def __composite_separator(self, separator):
-        if all(
-            (
-                self.partition_key_format_fields,
-                self.sort_key_format_fields,
-                separator is None,
-            )
-        ):
+        if any((self.partition_key_format_fields, self.sort_key_format_fields)) == (separator is None):
             raise RuntimeError(
                 "composite_separator must be specified when declaring partition_key_format or sort_key_format strings"
             )

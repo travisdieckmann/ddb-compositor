@@ -25,4 +25,4 @@ class DdbJsonEncoder(json.JSONEncoder):
             return str(o)
         if isinstance(o, date):
             return str(o)
-        return super(DdbJsonEncoder, self).default(o)
+        return super().default(o)

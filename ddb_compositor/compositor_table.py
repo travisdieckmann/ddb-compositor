@@ -109,8 +109,7 @@ class CompositorTable(object):
         if self.primary_index.sort_key_name:
             fields.append(self.primary_index.sort_key_name)
         for index in self.secondary_indexes:
-            if index.partition_key_name:
-                fields.append(index.partition_key_name)
+            fields.append(index.partition_key_name)
             if index.sort_key_name:
                 fields.append(index.sort_key_name)
         return list(set(fields))
@@ -157,8 +156,11 @@ class CompositorTable(object):
         stringify_attributes = self.stringify_attributes or []
 
         for attribute in stringify_attributes:
-            if field_values.get(attribute) is not None and field_values.get(attribute) != "":
-                field_values[attribute] = json.loads(field_values[attribute])
+            if field_values.get(attribute) is not None and isinstance(field_values.get(attribute), str):
+                try:
+                    field_values[attribute] = json.loads(field_values[attribute])
+                except Exception as e:
+                    logger.warning("destringify - %s", e)
 
         return field_values
 

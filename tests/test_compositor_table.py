@@ -1,11 +1,13 @@
+import os
+import re
 import json
 import inspect
-import pytest
-import os
-import botocore
 from io import StringIO
+
+import pytest
+import botocore
 from mock import patch, call
-import re
+
 from ddb_compositor import CompositorTable, PrimaryIndex, GlobalSecondaryIndex
 
 
@@ -21,6 +23,8 @@ test_table = CompositorTable(
         "dataTypes",
         "dataPoints",
         "version",
+        "properties",
+        "metadata",
         "createdAt",
         "createdBy",
     ],
@@ -44,8 +48,79 @@ test_table = CompositorTable(
     unique_id_attribute_name="id",
     latest_version_attribute="latest",
     versioning_attribute="version",
+    stringify_attributes=["properties", "metadata"],
     ttl_attribute_name="ttl",
 )
+
+
+def test_get_all_key_field_names():
+    key_field_names = test_table.get_all_key_field_names()
+    key_field_names.sort()
+    test_field_names = ["pk", "gss", "ps"]
+    test_field_names.sort()
+
+    assert key_field_names == test_field_names
+
+
+def test_all_item_properties():
+    attribute_list = [
+        "tenant_id",
+        "id",
+        "name",
+        "type",
+        "flowFilterId",
+        "description",
+        "dataTypes",
+        "dataPoints",
+        "version",
+        "properties",
+        "metadata",
+        "createdAt",
+        "createdBy",
+    ]
+    attribute_list.sort()
+    table_properties = test_table.all_item_properties()
+    table_properties.sort()
+
+    assert attribute_list == table_properties
+
+
+def test_errant_field_values():
+    test_fields = {"stuff": "value", "id": "1234"}
+
+    assert "stuff" in test_table.errant_field_values(test_fields)
+    assert "id" not in test_table.errant_field_values(test_fields)
+
+
+def test_errant_return_fields():
+    test_fields = {"stuff": "value", "id": "1234"}
+
+    assert "stuff" in test_table.errant_return_fields(test_fields)
+    assert "id" not in test_table.errant_return_fields(test_fields)
+
+
+def test_stringify():
+    test_fields = {"id": 1234, "properties": {"key_a": "value_a"}, "metadata": json.dumps({"key_b": "val_b"})}
+
+    stringified = test_table.stringify(test_fields)
+
+    assert isinstance(stringified.get("id"), int)
+    assert isinstance(stringified.get("properties"), str)
+    assert isinstance(stringified.get("metadata"), str)
+
+
+def test_destringify():
+    test_fields = {
+        "id": 1234,
+        "properties": json.dumps({"key_a": "value_a"}),
+        "metadata": "some stuff you shouldn't worry about",
+    }
+
+    destringified = test_table.destringify(test_fields)
+
+    assert isinstance(destringified.get("id"), int)
+    assert isinstance(destringified.get("properties"), dict)
+    assert isinstance(destringified.get("metadata"), str)
 
 
 @patch("botocore.client.BaseClient._make_api_call")

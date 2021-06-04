@@ -3,6 +3,7 @@ import re
 import json
 import inspect
 from io import StringIO
+from botocore.vendored.six import assertRaisesRegex
 
 import pytest
 import botocore
@@ -60,6 +61,7 @@ def test_get_all_key_field_names():
     test_field_names.sort()
 
     assert key_field_names == test_field_names
+    assert test_table.primary_index.sort_key_name in key_field_names
 
 
 def test_all_item_properties():
@@ -123,8 +125,117 @@ def test_destringify():
     assert isinstance(destringified.get("metadata"), str)
 
 
+def test_is_latest():
+    simple_table = CompositorTable(
+        table_name="testing",
+        primary_index=PrimaryIndex(
+            partition_key_name="pk", partition_key_format="partition:{id}", composite_separator=":"
+        ),
+        attribute_list=["id"],
+    )
+    assert simple_table.is_latest({"id": "value_a"}) is False
+
+    simple_table = CompositorTable(
+        table_name="testing",
+        primary_index=PrimaryIndex(
+            partition_key_name="pk",
+            partition_key_format="partition:{id}",
+            sort_key_name="sk",
+            sort_key_format="{accountId}:{version}",
+            composite_separator=":",
+        ),
+        attribute_list=["id", "accountId", "version", "some_key"],
+        versioning_attribute="version",
+        latest_version_attribute="latest",
+    )
+
+    assert simple_table.is_latest(
+        {
+            "pk": "partition:1234",
+            "sk": "a1b2c3d4:0",
+            "id": "1234",
+            "accountId": "a1b2c3d4",
+            "version": 0,
+        }
+    )
+
+    simple_table = CompositorTable(
+        table_name="testing",
+        primary_index=PrimaryIndex(
+            partition_key_name="pk",
+            partition_key_format="partition:{id}",
+            sort_key_name="sk",
+            sort_key_format="{accountId}",
+            composite_separator=":",
+        ),
+        secondary_indexes=[
+            GlobalSecondaryIndex(
+                name="test_secondary",
+                partition_key_name="pk",
+                partition_key_format="partition:{id}",
+                sort_key_name="gs1sk",
+                sort_key_format="{version}:{some_key}",
+                composite_separator=":",
+            )
+        ],
+        attribute_list=["id", "accountId", "version", "some_key"],
+        versioning_attribute="version",
+        latest_version_attribute="latest",
+    )
+
+    assert simple_table.is_latest(
+        {
+            "pk": "partition:1234",
+            "sk": "a1b2c3d4:0",
+            "gs1sk": "0:some_val",
+            "id": "1234",
+            "accountId": "a1b2c3d4",
+            "version": 0,
+            "some_key": "some_val",
+        }
+    )
+
+
+def test_reverse_format_string():
+    assert CompositorTable.reverse_format_string("val_a:val_b:val_c", "{key_a}:{key_b}:{key_c}") == {
+        "key_a": "val_a",
+        "key_b": "val_b",
+        "key_c": "val_c",
+    }
+
+    assert CompositorTable.reverse_format_string("some_funky_test_string", "some_funky_test_string") == {}
+
+
+def test_field_values_from_item_keys():
+    simple_table = CompositorTable(
+        table_name="testing",
+        primary_index=PrimaryIndex(
+            partition_key_name="pk",
+            partition_key_format="partition:{id}",
+            sort_key_name="ps",
+            sort_key_format="{accountId}:{version}",
+            composite_separator=":",
+        ),
+        attribute_list=["id", "accountId", "version", "some_key"],
+        versioning_attribute="version",
+        latest_version_attribute="latest",
+    )
+    assert (
+        simple_table.field_values_from_item_keys(
+            {
+                "pk": "partition:1234",
+                "ps": "a1b2c3d4:0",
+                "id": "1234",
+                "accountId": "a1b2c3d4",
+                "version": 0,
+            }
+        )
+        == {"id": "1234", "accountId": "a1b2c3d4", "version": "0"}
+    )
+
+
 @patch("botocore.client.BaseClient._make_api_call")
-def test_create_item_request(boto_mock):
+def test_put_item_request(boto_mock):
     # The mocked DynamoDB response.
     expected_ddb_response = {"ResponseMetadata": {"HTTPStatusCode": 201}}
     # The mocked response we expect back by calling DynamoDB through boto.
@@ -323,7 +434,7 @@ def test_delete_item_request(boto_mock):
 
     result_body = result.get("body")
     assert result_body["item"]["name"] == "Hot Garbage"
-    assert result_body["deleted"] == True
+    assert result_body["deleted"] is True
 
     assert boto_mock.call_count == 2
 

@@ -14,7 +14,7 @@
 # ==============================================================================
 
 import json
-import string
+import string  # pylint: disable=W0402
 import logging
 from os import environ
 from decimal import Decimal
@@ -22,7 +22,6 @@ from datetime import datetime, date
 from typing import List, Union
 
 import boto3
-import botocore.exceptions
 
 from ddb_compositor.indexes import (
     PrimaryIndex,
@@ -46,7 +45,7 @@ class CompositorTable(object):
         table_name: str,
         primary_index: PrimaryIndex,
         attribute_list: List[str],
-        secondary_indexes: List[GlobalSecondaryIndex] = None,
+        secondary_indexes: List[GlobalSecondaryIndex] = [],
         unique_id_attribute_name: str = None,
         stringify_attributes: List[str] = None,
         latest_version_attribute: str = None,
@@ -265,13 +264,6 @@ class CompositorTable(object):
 
         return field_values
 
-    def none_found_response(self):
-        return {
-            "ResponseMetadata": {"HTTPStatusCode": 404},
-            "Items": [],
-            "body": {"code": 404, "message": "No item found..."},
-        }
-
     def put_item(self, field_values: dict, overwrite: bool = True, latest_version: int = None) -> dict:
         field_values = self.stringify(field_values)
         field_values = self.params_cleanup(field_values)
@@ -304,19 +296,14 @@ class CompositorTable(object):
                 response = self.dynamo_table.put_item(**put_item_args)
                 logger.debug("Put_item: %s", json.dumps(response, cls=DdbJsonEncoder))
                 response["ResponseMetadata"]["HTTPStatusCode"] = 201
-            except botocore.exceptions.ClientError as e:
-                # Ignore the ConditionalCheckFailedException, bubble up
-                # other exceptions.
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    raise
-                else:
-                    response = e.response
-                    response["ResponseMetadata"]["HTTPStatusCode"] = 409
-                    response["body"] = {
-                        "code": response["ResponseMetadata"]["HTTPStatusCode"],
-                        "message": "Duplicate entry found!",
-                        "fields": str(self.primary_index.field_values_intersection(field_values)),
-                    }
+            except self.dynamo_resource.meta.client.exceptions.ConditionalCheckFailedException as e:
+                response = e.response
+                response["ResponseMetadata"]["HTTPStatusCode"] = 409
+                response["body"] = {
+                    "code": response["ResponseMetadata"]["HTTPStatusCode"],
+                    "message": "Duplicate entry found!",
+                    "fields": str(self.primary_index.field_values_intersection(field_values)),
+                }
                 break
 
         if "body" not in response:
@@ -358,7 +345,7 @@ class CompositorTable(object):
         existing_items = self.dynamo_table.query(**query_args)
 
         if len(existing_items["Items"]) < 1:
-            return self.none_found_response()
+            return existing_items
 
         del_item = None
         delete_items = []
@@ -413,7 +400,7 @@ class CompositorTable(object):
         latest_item = self.get_items(latest_item_values, return_fields)
 
         if len(latest_item["Items"]) < 1:
-            return self.none_found_response()
+            return latest_item
 
         latest_item = latest_item["Items"][0]
 

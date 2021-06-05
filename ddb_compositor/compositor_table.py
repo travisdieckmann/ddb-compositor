@@ -14,7 +14,7 @@
 # ==============================================================================
 
 import json
-import string
+import string  # pylint: disable=W0402
 import logging
 from os import environ
 from decimal import Decimal
@@ -22,14 +22,14 @@ from datetime import datetime, date
 from typing import List, Union
 
 import boto3
-import botocore.exceptions
 
 from ddb_compositor.indexes import (
     PrimaryIndex,
     GlobalSecondaryIndex,
     LocalSecondaryIndex,
 )
-from ddb_compositor.exceptions import *
+from ddb_compositor.utility import DdbJsonEncoder
+from ddb_compositor.exceptions import UnknownIndexTypeError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(environ.get("LOG_LEVEL", logging.INFO))
@@ -39,24 +39,13 @@ RESERVED_WORDS = ['ABORT','ABSOLUTE','ACTION','ADD','AFTER','AGENT','AGGREGATE',
 # fmt: on
 
 
-class DdbJsonEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, Decimal):
-            return int(o) if int(o) == o else float(str(o))
-        if isinstance(o, datetime):
-            return str(o)
-        if isinstance(o, date):
-            return str(o)
-        return super(DdbJsonEncoder, self).default(o)
-
-
 class CompositorTable(object):
     def __init__(
         self,
         table_name: str,
         primary_index: PrimaryIndex,
         attribute_list: List[str],
-        secondary_indexes: List[GlobalSecondaryIndex] = None,
+        secondary_indexes: List[GlobalSecondaryIndex] = [],
         unique_id_attribute_name: str = None,
         stringify_attributes: List[str] = None,
         latest_version_attribute: str = None,
@@ -104,31 +93,33 @@ class CompositorTable(object):
 
         return response
 
-    def latest_version(self, field_values: dict) -> int:
+    def get_next_version(self, field_values: dict, latest_version: int = None) -> int:
+        if latest_version is not None:
+            return latest_version + 1
+
         query_args = self.get_expression([self.latest_version_attribute])
         field_values[self.versioning_attribute] = 0
         query_args["Key"] = self.primary_index.full_key(field_values)
         results = self.dynamo_table.get_item(**query_args)
-        return int(results.get("Item", {}).get(self.latest_version_attribute, 0))
+        return int(results.get("Item", {}).get(self.latest_version_attribute, 0)) + 1
 
     def get_all_key_field_names(self) -> list:
-        fields = [self.primary_index.hash_key_name]
-        if self.primary_index.range_key_name:
-            fields.append(self.primary_index.range_key_name)
+        fields = [self.primary_index.partition_key_name]
+        if self.primary_index.sort_key_name:
+            fields.append(self.primary_index.sort_key_name)
         for index in self.secondary_indexes:
-            if index.hash_key_name:
-                fields.append(index.hash_key_name)
-            if index.range_key_name:
-                fields.append(index.range_key_name)
+            fields.append(index.partition_key_name)
+            if index.sort_key_name:
+                fields.append(index.sort_key_name)
         return list(set(fields))
 
     def all_item_properties(self) -> list:
         all_field_names = self.attribute_list
-        all_field_names += self.primary_index.hash_key_format_fields
-        all_field_names += self.primary_index.range_key_format_fields
+        all_field_names += self.primary_index.partition_key_format_fields
+        all_field_names += self.primary_index.sort_key_format_fields
         for index in self.secondary_indexes:
-            all_field_names += index.hash_key_format_fields
-            all_field_names += index.range_key_format_fields
+            all_field_names += index.partition_key_format_fields
+            all_field_names += index.sort_key_format_fields
 
         return list(set(all_field_names))
 
@@ -164,8 +155,11 @@ class CompositorTable(object):
         stringify_attributes = self.stringify_attributes or []
 
         for attribute in stringify_attributes:
-            if field_values.get(attribute) is not None and field_values.get(attribute) != "":
-                field_values[attribute] = json.loads(field_values[attribute])
+            if field_values.get(attribute) is not None and isinstance(field_values.get(attribute), str):
+                try:
+                    field_values[attribute] = json.loads(field_values[attribute])
+                except Exception as e:
+                    logger.warning("destringify - %s", e)
 
         return field_values
 
@@ -211,11 +205,11 @@ class CompositorTable(object):
 
         field_values = {
             self.versioning_attribute: 0,
-            self.primary_index.hash_key_name: item[self.primary_index.hash_key_name],
+            self.primary_index.partition_key_name: item[self.primary_index.partition_key_name],
         }
 
         for index in self.secondary_indexes:
-            field_values[index.hash_key_name] = item[index.hash_key_name]
+            field_values[index.partition_key_name] = item[index.partition_key_name]
 
         primary_index_score = self.primary_index.query_score(field_values=field_values)
 
@@ -225,12 +219,12 @@ class CompositorTable(object):
 
         if all(primary_index_score >= x for x in secondary_index_scores):
             sort_best_match = self.primary_index.get_sort_best_match(field_values)
-            if item[self.primary_index.range_key_name].startswith(sort_best_match):
+            if item[self.primary_index.sort_key_name].startswith(sort_best_match):
                 return True
         else:
             secondary_index = self.secondary_indexes[secondary_index_scores.index(max(secondary_index_scores))]
             sort_best_match = secondary_index.get_sort_best_match(field_values)
-            if item[secondary_index.range_key_name].startswith(sort_best_match):
+            if item[secondary_index.sort_key_name].startswith(sort_best_match):
                 return True
 
         return False
@@ -253,38 +247,29 @@ class CompositorTable(object):
 
     def field_values_from_item_keys(self, item: dict) -> dict:
         field_values = self.reverse_format_string(
-            item[self.primary_index.hash_key_name], self.primary_index.hash_key_format
+            item[self.primary_index.partition_key_name], self.primary_index.partition_key_format
         )
-        if self.primary_index.range_key_name:
+        if self.primary_index.sort_key_name:
             field_values.update(
                 self.reverse_format_string(
-                    item[self.primary_index.range_key_name],
-                    self.primary_index.range_key_format,
+                    item[self.primary_index.sort_key_name],
+                    self.primary_index.sort_key_format,
                 )
             )
         for index in self.secondary_indexes:
-            field_values.update(self.reverse_format_string(item[index.hash_key_name], index.hash_key_format))
+            field_values.update(self.reverse_format_string(item[index.partition_key_name], index.partition_key_format))
 
-            if index.hash_key_name:
-                field_values.update(self.reverse_format_string(item[index.range_key_name], index.range_key_format))
+            if index.partition_key_name:
+                field_values.update(self.reverse_format_string(item[index.sort_key_name], index.sort_key_format))
 
         return field_values
 
-    def none_found_response(self):
-        return {
-            "ResponseMetadata": {"HTTPStatusCode": 404},
-            "Items": [],
-            "body": {"code": 404, "message": "No item found..."},
-        }
-
-    def create_item(self, field_values: dict, overwrite: bool = True, latest_version: int = None) -> dict:
+    def put_item(self, field_values: dict, overwrite: bool = True, latest_version: int = None) -> dict:
         field_values = self.stringify(field_values)
         field_values = self.params_cleanup(field_values)
+
         if self.versioning_enabled:
-            if latest_version is None:
-                field_values[self.versioning_attribute] = self.latest_version(field_values) + 1
-            else:
-                field_values[self.versioning_attribute] = latest_version + 1
+            field_values[self.versioning_attribute] = self.get_next_version(field_values, latest_version)
 
         items = [field_values.copy()]
         items[0].update(self.primary_index.full_key(field_values))
@@ -307,23 +292,18 @@ class CompositorTable(object):
             if not overwrite:
                 put_item_args.update({"ConditionExpression": self.primary_index.get_ne_conditional(field_values)})
             try:
-                logger.debug("New item: {r}".format(r=json.dumps(item, cls=DdbJsonEncoder)))
+                logger.debug("New item: %s", json.dumps(item, cls=DdbJsonEncoder))
                 response = self.dynamo_table.put_item(**put_item_args)
-                logger.debug("Put_item: {resp}".format(resp=json.dumps(response, cls=DdbJsonEncoder)))
+                logger.debug("Put_item: %s", json.dumps(response, cls=DdbJsonEncoder))
                 response["ResponseMetadata"]["HTTPStatusCode"] = 201
-            except botocore.exceptions.ClientError as e:
-                # Ignore the ConditionalCheckFailedException, bubble up
-                # other exceptions.
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    raise
-                else:
-                    response = e.response
-                    response["ResponseMetadata"]["HTTPStatusCode"] = 409
-                    response["body"] = {
-                        "code": response["ResponseMetadata"]["HTTPStatusCode"],
-                        "message": "Duplicate entry found!",
-                        "fields": str(self.get_primary_key_value_pairs(field_values)),
-                    }
+            except self.dynamo_resource.meta.client.exceptions.ConditionalCheckFailedException as e:
+                response = e.response
+                response["ResponseMetadata"]["HTTPStatusCode"] = 409
+                response["body"] = {
+                    "code": response["ResponseMetadata"]["HTTPStatusCode"],
+                    "message": "Duplicate entry found!",
+                    "fields": str(self.primary_index.field_values_intersection(field_values)),
+                }
                 break
 
         if "body" not in response:
@@ -365,7 +345,7 @@ class CompositorTable(object):
         existing_items = self.dynamo_table.query(**query_args)
 
         if len(existing_items["Items"]) < 1:
-            return self.none_found_response()
+            return existing_items
 
         del_item = None
         delete_items = []
@@ -376,25 +356,29 @@ class CompositorTable(object):
                 del_item = item.copy()
 
             logger.debug(
-                "Deleting item: {k}:{s}".format(
-                    k=item[self.primary_index.hash_key_name],
-                    s=item.get(self.primary_index.range_key_name, ""),
-                )
+                "Deleting item: %s:%s",
+                k=item[self.primary_index.partition_key_name],
+                s=item.get(
+                    self.primary_index.sort_key_name,
+                    "",
+                ),
             )
 
             delete_item = {
-                "DeleteRequest": {"Key": {self.primary_index.hash_key_name: item[self.primary_index.hash_key_name]}}
+                "DeleteRequest": {
+                    "Key": {self.primary_index.partition_key_name: item[self.primary_index.partition_key_name]}
+                }
             }
 
-            if self.primary_index.range_key_name:
-                attrib_name = self.primary_index.range_key_name
+            if self.primary_index.sort_key_name:
+                attrib_name = self.primary_index.sort_key_name
                 delete_item["DeleteRequest"]["Key"][attrib_name] = item[attrib_name]
 
             delete_items.append(delete_item)
 
         response = self.dynamo_resource.batch_write_item(RequestItems={self.table_name: delete_items})
 
-        logger.debug("DynamoDB 'delete_item' response: {resp}".format(resp=json.dumps(response, cls=DdbJsonEncoder)))
+        logger.debug("DynamoDB 'delete_item' response: %s", json.dumps(response, cls=DdbJsonEncoder))
 
         # Cleanup del_item
         for field_name in self.get_all_key_field_names():
@@ -416,7 +400,7 @@ class CompositorTable(object):
         latest_item = self.get_items(latest_item_values, return_fields)
 
         if len(latest_item["Items"]) < 1:
-            return self.none_found_response()
+            return latest_item
 
         latest_item = latest_item["Items"][0]
 
@@ -426,7 +410,7 @@ class CompositorTable(object):
         if self.versioning_enabled and not force_overwrite:
             latest_version = latest_item.pop(self.latest_version_attribute)
 
-        return self.create_item(field_values=field_values, latest_version=latest_version)
+        return self.put_item(field_values=field_values, latest_version=latest_version)
 
     @staticmethod
     def params_cleanup(params: dict, null_if_empty: bool = True) -> dict:

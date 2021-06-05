@@ -6,7 +6,7 @@ init:
 	pip install -e '.[dev]'
 
 test:
-	pytest --cov ddb_compositor --cov-report term-missing --cov-fail-under 80 tests/*
+	pytest --cov ddb_compositor --cov-report term-missing --cov-fail-under 95 tests/*
 
 black:
 	black setup.py ddb_compositor/* tests/*

@@ -23,7 +23,7 @@ from ddb_compositor.indexes import (
 )
 
 
-if sys.hexversion < 0x30701F0:
-    sys.exit("Python 3.7.3 or newer is required by ddb_compositor module.")
+if sys.hexversion < 0x3060000:
+    sys.exit("Python 3.6.0 or newer is required by ddb_compositor module.")
 
 __version__ = "0.1.0"
